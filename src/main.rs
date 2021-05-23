@@ -3,6 +3,7 @@ use std::io;
 use std::net::IpAddr;
 use std::net::Ipv4Addr;
 use std::net::SocketAddr;
+use std::str::FromStr;
 
 use anyhow::anyhow;
 use anyhow::bail;
@@ -23,7 +24,7 @@ mod resolve;
 
 #[derive(Debug)]
 enum ConnectType {
-    Http { hostname: String },
+    Http { hostname: String, port: u16 },
     Socks4Ip { ip: Ipv4Addr, port: u16 },
     Socks4Host { hostname: String, port: u16 },
 }
@@ -37,7 +38,7 @@ async fn read_initialisation(socket: &mut TcpStream, buf: &mut [u8]) -> Result<C
         }
         progress += found;
         let valid = &buf[..progress];
-        match valid[0] {
+        return match valid[0] {
             // https-style CONNECT
             b'C' | b'c' => {
                 let mut headers = [httparse::EMPTY_HEADER; 16];
@@ -50,12 +51,19 @@ async fn read_initialisation(socket: &mut TcpStream, buf: &mut [u8]) -> Result<C
                     "invalid method {:?}",
                     req.method
                 );
-                return match req.path {
-                    Some(path) => Ok(ConnectType::Http {
-                        hostname: path.to_string(),
-                    }),
-                    None => bail!("connect with no path?"),
-                };
+                let host_with_port = req.path.ok_or(anyhow!("no path on a valid request?"))?;
+                let colon = host_with_port
+                    .rfind(|c| c == ':')
+                    .ok_or(anyhow!("port required in hostname"))?;
+                let (hostname, port) = host_with_port.split_at(colon);
+                if port.is_empty() {
+                    bail!("empty port");
+                }
+                let port = u16::from_str(&port[1..])?;
+                Ok(ConnectType::Http {
+                    hostname: hostname.to_string(),
+                    port,
+                })
             }
             // socks 4 + socks 4a
             0x04 => {
@@ -90,24 +98,23 @@ async fn read_initialisation(socket: &mut TcpStream, buf: &mut [u8]) -> Result<C
                 let ip: [u8; 4] = valid[4..8].try_into().expect("explicit slice");
                 let ip = Ipv4Addr::from(ip);
 
-                return if socks4a_marker_ip(&ip) {
-                    let hostname_end =
-                        match valid.iter().skip(user_end + 1).position(|&c| c == b'\0') {
-                            Some(pos) => user_end + 1 + pos,
-                            None => continue,
-                        };
+                if socks4a_marker_ip(&ip) {
+                    let hostname_end = match valid.iter().skip(user_end).position(|&c| c == b'\0') {
+                        Some(pos) => user_end + pos,
+                        None => continue,
+                    };
                     Ok(ConnectType::Socks4Host {
-                        hostname: String::from_utf8(valid[user_end + 1..hostname_end].to_vec())?,
+                        hostname: String::from_utf8(valid[user_end..hostname_end].to_vec())?,
                         port,
                     })
                 } else {
                     Ok(ConnectType::Socks4Ip { ip, port })
-                };
+                }
             }
             _ => {
                 bail!("unrecognised, {:?}", valid);
             }
-        }
+        };
     }
 }
 
@@ -122,8 +129,9 @@ async fn worker(resolve_ctx: ResolveCtx, mut source: TcpStream) -> Result<()> {
     let mut buf = [0; 4096];
     let init = read_initialisation(&mut source, &mut buf).await?;
     let dest = match init {
-        ConnectType::Http { hostname } => {
-            let addrs = resolve::resolve(resolve_ctx, &hostname).await?;
+        // TODO: these are all clearly the same
+        ConnectType::Http { hostname, port } => {
+            let addrs = resolve::resolve(resolve_ctx, &hostname, port).await?;
             info!(
                 "establishing HTTP CONNECT connection to {:?} via {:?}",
                 hostname, addrs
@@ -132,14 +140,29 @@ async fn worker(resolve_ctx: ResolveCtx, mut source: TcpStream) -> Result<()> {
             source.write_all(b"HTTP/1.0 200 OK\r\n\r\n").await?;
             conn
         }
+        ConnectType::Socks4Host { hostname, port } => {
+            let addrs = resolve::resolve(resolve_ctx, &hostname, port).await?;
+            info!(
+                "establishing Socks4a connection to {:?} via {:?}",
+                hostname, addrs
+            );
+            let conn = TcpStream::connect(&*addrs).await?;
+            // TODO: these nulls are supposed to be the client's request, not null,
+            // TODO: not that I can see any reason why anyone would care
+            // 5a: OK!
+            source.write_all(b"\0\x5a\0\0\0\0\0\0").await?;
+            conn
+        }
         ConnectType::Socks4Ip { ip, port } => {
             let addr = SocketAddr::new(IpAddr::V4(ip), port);
             info!("establishing socks4 legacy connection to {:?}", addr);
             let conn = TcpStream::connect(addr).await?;
+            // TODO: these nulls are supposed to be the client's request, not null,
+            // TODO: not that I can see any reason why anyone would care
+            // 5a: OK!
             source.write_all(b"\0\x5a\0\0\0\0\0\0").await?;
             conn
         }
-        ConnectType::Socks4Host { .. } => unimplemented!(),
     };
 
     let (mut source_read, mut source_write) = source.into_split();

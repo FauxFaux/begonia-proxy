@@ -33,18 +33,11 @@ pub struct ResolveCtx {
 // $0.$default.svc.cluster.local
 // $0.svc.cluster.local
 // $0.cluster.local
-pub(crate) async fn resolve(ctx: ResolveCtx, hostname: &str) -> Result<Vec<SocketAddr>> {
-    lazy_static! {
-        static ref PORT: Regex = Regex::new(concat!("^(.*)(?::(\\d+))?$")).unwrap();
-    }
-
-    let (hostname, specified_port) = {
-        match PORT.captures(hostname) {
-            Some(cap) => (cap[1].to_string(), cap.get(2).map(|m| m.as_str())),
-            None => (hostname.to_string(), None),
-        }
-    };
-
+pub(crate) async fn resolve(
+    ctx: ResolveCtx,
+    hostname: &str,
+    specified_port: u16,
+) -> Result<Vec<SocketAddr>> {
     lazy_static! {
         static ref RE: Regex = Regex::new(concat!(
             "^([a-zA-Z0-9-]{1,63})(?:\\.([a-zA-Z0-9-]{1,63}))?",
@@ -94,11 +87,9 @@ pub(crate) async fn resolve(ctx: ResolveCtx, hostname: &str) -> Result<Vec<Socke
                             .next()
                             .expect("is of length one so has an element"),
                     )?
-                } else if let Some(specified_port) = specified_port {
-                    // TODO: map using actual service
-                    u16::from_str(specified_port)?
                 } else {
-                    unimplemented!()
+                    // TODO: map using actual service
+                    specified_port
                 };
 
                 return Ok(ips
@@ -110,15 +101,10 @@ pub(crate) async fn resolve(ctx: ResolveCtx, hostname: &str) -> Result<Vec<Socke
         }
     }
 
-    let port = u16::from_str(specified_port.ok_or(anyhow!(
-        "port required when not resolving endpoints, not {:?}",
-        hostname
-    ))?)?;
-
     Ok(resolve_against_kube_dns(ctx, &hostname)
         .await?
         .into_iter()
-        .map(|ip| SocketAddr::new(ip, port))
+        .map(|ip| SocketAddr::new(ip, specified_port))
         .collect())
 }
 
