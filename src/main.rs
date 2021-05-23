@@ -1,11 +1,18 @@
+use std::convert::TryInto;
+use std::io;
+use std::net::IpAddr;
+use std::net::Ipv4Addr;
+use std::net::SocketAddr;
+
 use anyhow::anyhow;
 use anyhow::bail;
 use anyhow::ensure;
 use anyhow::Context;
 use anyhow::Result;
+use log::debug;
 use log::error;
 use log::info;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
 use crate::k8s::find_dns;
@@ -15,16 +22,13 @@ mod k8s;
 mod resolve;
 
 #[derive(Debug)]
-enum ConnectType<'b> {
+enum ConnectType {
     Http { hostname: String },
-    Socks4Ip { ip: &'b [u8] },
-    Socks4Host { hostname: &'b str },
+    Socks4Ip { ip: Ipv4Addr, port: u16 },
+    Socks4Host { hostname: String, port: u16 },
 }
 
-async fn read_initialisation<'b>(
-    socket: &mut TcpStream,
-    buf: &'b mut [u8],
-) -> Result<ConnectType<'b>> {
+async fn read_initialisation(socket: &mut TcpStream, buf: &mut [u8]) -> Result<ConnectType> {
     let mut progress = 0;
     loop {
         let found = socket.read(&mut buf[progress..]).await?;
@@ -34,6 +38,7 @@ async fn read_initialisation<'b>(
         progress += found;
         let valid = &buf[..progress];
         match valid[0] {
+            // https-style CONNECT
             b'C' | b'c' => {
                 let mut headers = [httparse::EMPTY_HEADER; 16];
                 let mut req = httparse::Request::new(&mut headers);
@@ -52,6 +57,53 @@ async fn read_initialisation<'b>(
                     None => bail!("connect with no path?"),
                 };
             }
+            // socks 4 + socks 4a
+            0x04 => {
+                let fixed_header_len = 1 + 1 + 2 + 4;
+                if valid.len() < fixed_header_len {
+                    debug!("socks4 client only sent {} bytes", valid.len());
+                    continue;
+                }
+
+                // establish connection
+                if valid[1] != 0x01 {
+                    socket.write_all(b"\0\x5b").await?;
+                    socket.write_all(&valid[2..8]).await?;
+                    bail!("invalid socks4 command: {:02x}", valid[1]);
+                }
+
+                let user_end = match valid
+                    .iter()
+                    .skip(fixed_header_len)
+                    .position(|&c| c == b'\0')
+                {
+                    Some(pos) => fixed_header_len + pos,
+                    None => continue,
+                };
+                // ignoring actual user data (typically empty anyway)
+
+                // strip null
+                let user_end = user_end + 1;
+
+                let port = u16::from_be_bytes(valid[2..4].try_into().expect("explicit slice"));
+                // TODO: do we need to byteswap this?
+                let ip: [u8; 4] = valid[4..8].try_into().expect("explicit slice");
+                let ip = Ipv4Addr::from(ip);
+
+                return if socks4a_marker_ip(&ip) {
+                    let hostname_end =
+                        match valid.iter().skip(user_end + 1).position(|&c| c == b'\0') {
+                            Some(pos) => user_end + 1 + pos,
+                            None => continue,
+                        };
+                    Ok(ConnectType::Socks4Host {
+                        hostname: String::from_utf8(valid[user_end + 1..hostname_end].to_vec())?,
+                        port,
+                    })
+                } else {
+                    Ok(ConnectType::Socks4Ip { ip, port })
+                };
+            }
             _ => {
                 bail!("unrecognised, {:?}", valid);
             }
@@ -59,29 +111,61 @@ async fn read_initialisation<'b>(
     }
 }
 
+fn socks4a_marker_ip(ip: &Ipv4Addr) -> bool {
+    let oc = ip.octets();
+    oc[0] == 0 && oc[1] == 0 && oc[2] == 0 && oc[3] != 0
+}
+
 async fn worker(resolve_ctx: ResolveCtx, mut source: TcpStream) -> Result<()> {
+    let peer = source.peer_addr()?;
+
     let mut buf = [0; 4096];
     let init = read_initialisation(&mut source, &mut buf).await?;
     let dest = match init {
         ConnectType::Http { hostname } => {
             let addrs = resolve::resolve(resolve_ctx, &hostname).await?;
-            info!("establishing connection to {:?} via {:?}", hostname, addrs);
+            info!(
+                "establishing HTTP CONNECT connection to {:?} via {:?}",
+                hostname, addrs
+            );
             let conn = TcpStream::connect(&*addrs).await?;
             source.write_all(b"HTTP/1.0 200 OK\r\n\r\n").await?;
             conn
         }
-        _ => unimplemented!("{:?}", init),
+        ConnectType::Socks4Ip { ip, port } => {
+            let addr = SocketAddr::new(IpAddr::V4(ip), port);
+            info!("establishing socks4 legacy connection to {:?}", addr);
+            let conn = TcpStream::connect(addr).await?;
+            source.write_all(b"\0\x5a\0\0\0\0\0\0").await?;
+            conn
+        }
+        ConnectType::Socks4Host { .. } => unimplemented!(),
     };
 
     let (mut source_read, mut source_write) = source.into_split();
     let (mut dest_read, mut dest_write) = dest.into_split();
 
+    // let sent = tokio::io::copy(&mut source_read, &mut dest_write).await?;
+    // dest_write.shutdown().await?;
+
     tokio::try_join!(
-        tokio::io::copy(&mut source_read, &mut dest_write),
-        tokio::io::copy(&mut dest_read, &mut source_write),
+        copy_close(&mut source_read, &mut dest_write),
+        copy_close(&mut dest_read, &mut source_write),
     )?;
 
+    info!("{:?} exited cleanly", peer);
+
     Ok(())
+}
+
+pub async fn copy_close<'a, R, W>(reader: &'a mut R, writer: &'a mut W) -> io::Result<u64>
+where
+    R: AsyncRead + Unpin + ?Sized,
+    W: AsyncWrite + Unpin + ?Sized,
+{
+    let b = tokio::io::copy(reader, writer).await?;
+    writer.shutdown().await?;
+    Ok(b)
 }
 
 #[tokio::main]
