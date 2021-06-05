@@ -7,9 +7,9 @@ use std::str::FromStr;
 
 use anyhow::anyhow;
 use anyhow::bail;
-use anyhow::ensure;
 use anyhow::Context;
 use anyhow::Result;
+use kube::Client;
 use log::debug;
 use log::error;
 use log::info;
@@ -27,6 +27,9 @@ enum ConnectType {
     Http { hostname: String, port: u16 },
     Socks4Ip { ip: Ipv4Addr, port: u16 },
     Socks4Host { hostname: String, port: u16 },
+
+    // not a connect, but we're gonna reply anyway
+    InvalidHttpGet { path: String },
 }
 
 async fn read_initialisation(socket: &mut TcpStream, buf: &mut [u8]) -> Result<ConnectType> {
@@ -40,18 +43,22 @@ async fn read_initialisation(socket: &mut TcpStream, buf: &mut [u8]) -> Result<C
         let valid = &buf[..progress];
         return match valid[0] {
             // https-style CONNECT
-            b'C' | b'c' => {
+            b'C' | b'G' => {
                 let mut headers = [httparse::EMPTY_HEADER; 16];
                 let mut req = httparse::Request::new(&mut headers);
                 if req.parse(&buf)?.is_partial() {
                     continue;
                 }
-                ensure!(
-                    req.method == Some("CONNECT"),
-                    "invalid method {:?}",
-                    req.method
-                );
-                let host_with_port = req.path.ok_or(anyhow!("no path on a valid request?"))?;
+                let path = req.path.ok_or(anyhow!("no path on a valid request?"))?;
+                let host_with_port = match req.method {
+                    Some("CONNECT") => path,
+                    Some("GET") => {
+                        return Ok(ConnectType::InvalidHttpGet {
+                            path: path.to_string(),
+                        })
+                    }
+                    method => bail!("invalid method {:?}", method),
+                };
                 let colon = host_with_port
                     .rfind(|c| c == ':')
                     .ok_or(anyhow!("port required in hostname"))?;
@@ -163,6 +170,18 @@ async fn worker(resolve_ctx: ResolveCtx, mut source: TcpStream) -> Result<()> {
             source.write_all(b"\0\x5a\0\0\0\0\0\0").await?;
             conn
         }
+
+        ConnectType::InvalidHttpGet { path } => {
+            let msg = match path.as_ref() {
+                "/" => concat!("HTTP/1.0 200 OK\r\n\r\n", env!("CARGO_CRATE_NAME")),
+                "/healthcheck" => {
+                    "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\n\r\n{\"ok\":true}"
+                }
+                _ => "HTTP/1.0 404 NO\r\n\r\n",
+            };
+            source.write_all(msg.as_bytes()).await?;
+            return Ok(());
+        }
     };
 
     let (mut source_read, mut source_write) = source.into_split();
@@ -195,7 +214,7 @@ where
 pub async fn main() -> Result<()> {
     env_logger::init();
 
-    let client = k8s::client_forking_proxy()?;
+    let client = Client::try_default().await?;
 
     let version_info = client
         .apiserver_version()
