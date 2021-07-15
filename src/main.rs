@@ -154,9 +154,7 @@ async fn worker(resolve_ctx: ResolveCtx, mut source: TcpStream) -> Result<()> {
                 hostname, addrs
             );
             let conn = TcpStream::connect(&*addrs).await?;
-            // TODO: these nulls are supposed to be the client's request, not null,
-            // TODO: not that I can see any reason why anyone would care
-            // 5a: OK!
+            // 5a: OK!, other fields irrelevant for a connect request
             source.write_all(b"\0\x5a\0\0\0\0\0\0").await?;
             conn
         }
@@ -164,9 +162,7 @@ async fn worker(resolve_ctx: ResolveCtx, mut source: TcpStream) -> Result<()> {
             let addr = SocketAddr::new(IpAddr::V4(ip), port);
             info!("establishing socks4 legacy connection to {:?}", addr);
             let conn = TcpStream::connect(addr).await?;
-            // TODO: these nulls are supposed to be the client's request, not null,
-            // TODO: not that I can see any reason why anyone would care
-            // 5a: OK!
+            // 5a: OK!, other fields irrelevant for a connect request
             source.write_all(b"\0\x5a\0\0\0\0\0\0").await?;
             conn
         }
