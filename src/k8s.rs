@@ -19,16 +19,9 @@ pub async fn find_dns(client: Client) -> Result<Vec<IpAddr>> {
         .with_context(|| anyhow!("listing endpoints"))?;
     endpoints
         .subsets
-        .ok_or(anyhow!("no kube-dns endpoints at all"))?
         .into_iter()
-        .filter(|endpoint| match endpoint.ports.as_ref() {
-            Some(ports) => has_port(53, ports),
-            None => false,
-        })
-        .flat_map(|endpoint| match endpoint.addresses {
-            Some(addresses) => addresses.into_iter().map(|address| address.ip).collect(),
-            None => Vec::new(),
-        })
+        .filter(|endpoint| has_port(53, &endpoint.ports))
+        .flat_map(|endpoint| endpoint.addresses.into_iter().map(|address| address.ip))
         .map(|s| Ok(IpAddr::from_str(&s).with_context(|| anyhow!("parsing {:?}", s))?))
         .collect()
 }

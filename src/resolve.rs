@@ -63,12 +63,12 @@ pub(crate) async fn resolve(
                     .await?;
 
                 // lazily ignoring the idea that there might be differences between sets
-                for subset in endpoints.subsets.unwrap_or_default() {
-                    for port in subset.ports.unwrap_or_default() {
+                for subset in endpoints.subsets {
+                    for port in subset.ports {
                         ports.insert(port.port);
                     }
 
-                    for address in subset.addresses.unwrap_or_default() {
+                    for address in subset.addresses {
                         ips.push(
                             IpAddr::from_str(&address.ip)
                                 .with_context(|| anyhow!("parsing {:?}", address.ip))?,
