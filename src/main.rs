@@ -135,36 +135,41 @@ async fn worker(resolve_ctx: ResolveCtx, mut source: TcpStream) -> Result<()> {
 
     let mut buf = [0; 4096];
     let init = read_initialisation(&mut source, &mut buf).await?;
-    let dest = match init {
+    let (hint, ok_message, addrs) = match init {
         // TODO: these are all clearly the same
         ConnectType::Http { hostname, port } => {
             let addrs = resolve::resolve(resolve_ctx, &hostname, port).await?;
-            info!(
-                "establishing HTTP CONNECT connection to {:?} via {:?}",
-                hostname, addrs
-            );
-            let conn = TcpStream::connect(&*addrs).await?;
-            source.write_all(b"HTTP/1.0 200 OK\r\n\r\n").await?;
-            conn
+            (
+                format!("HTTP CONNECT to {}", hostname),
+                b"HTTP/1.0 200 OK\r\n\r\n".to_vec(),
+                addrs,
+            )
         }
         ConnectType::Socks4Host { hostname, port } => {
-            let addrs = resolve::resolve(resolve_ctx, &hostname, port).await?;
-            info!(
-                "establishing Socks4a connection to {:?} via {:?}",
-                hostname, addrs
-            );
-            let conn = TcpStream::connect(&*addrs).await?;
+            let addrs = match resolve::resolve(resolve_ctx, &hostname, port).await {
+                Ok(addrs) => addrs,
+                Err(err) => {
+                    info!("invalid client request: {:?}", err);
+                    // 5b: generic rejection (no error propagation available)
+                    source.write_all(b"\0\x5b\0\0\0\0\0\0").await?;
+                    return Ok(());
+                }
+            };
             // 5a: OK!, other fields irrelevant for a connect request
-            source.write_all(b"\0\x5a\0\0\0\0\0\0").await?;
-            conn
+            (
+                format!("Socks4a to {}", hostname),
+                b"\0\x5a\0\0\0\0\0\0".to_vec(),
+                addrs,
+            )
         }
         ConnectType::Socks4Ip { ip, port } => {
             let addr = SocketAddr::new(IpAddr::V4(ip), port);
-            info!("establishing socks4 legacy connection to {:?}", addr);
-            let conn = TcpStream::connect(addr).await?;
             // 5a: OK!, other fields irrelevant for a connect request
-            source.write_all(b"\0\x5a\0\0\0\0\0\0").await?;
-            conn
+            (
+                format!("Socks4 legacy to {:?}", ip),
+                b"\0\x5a\0\0\0\0\0\0".to_vec(),
+                vec![addr],
+            )
         }
 
         ConnectType::InvalidHttpGet { path } => {
@@ -179,6 +184,10 @@ async fn worker(resolve_ctx: ResolveCtx, mut source: TcpStream) -> Result<()> {
             return Ok(());
         }
     };
+
+    info!("establishing {} via {:?}", hint, addrs);
+    let dest = TcpStream::connect(&*addrs).await?;
+    source.write_all(&ok_message).await?;
 
     let (mut source_read, mut source_write) = source.into_split();
     let (mut dest_read, mut dest_write) = dest.into_split();
