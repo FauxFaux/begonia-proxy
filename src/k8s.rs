@@ -19,9 +19,22 @@ pub async fn find_dns(client: Client) -> Result<Vec<IpAddr>> {
         .with_context(|| anyhow!("listing endpoints"))?;
     endpoints
         .subsets
+        .unwrap_or_default()
         .into_iter()
-        .filter(|endpoint| has_port(53, &endpoint.ports))
-        .flat_map(|endpoint| endpoint.addresses.into_iter().map(|address| address.ip))
+        .filter(|endpoint| {
+            endpoint
+                .ports
+                .as_ref()
+                .map(|v| has_port(53, v))
+                .unwrap_or(false)
+        })
+        .flat_map(|endpoint| {
+            endpoint
+                .addresses
+                .unwrap_or_default()
+                .into_iter()
+                .map(|address| address.ip)
+        })
         .map(|s| Ok(IpAddr::from_str(&s).with_context(|| anyhow!("parsing {:?}", s))?))
         .collect()
 }

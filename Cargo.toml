@@ -7,12 +7,12 @@ edition = "2018"
 anyhow = "1"
 env_logger = "0.10"
 httparse = "1"
-k8s-openapi = { version = "0.12.0", default-features = false, features = ["v1_17"] }
-kube = { version = "0.58", features = ["client"] }
+k8s-openapi = { version = "0.13.0", default-features = false, features = ["v1_17"] }
+kube = { version = "0.60", features = ["client"] }
 lazy_static = "1"
 log = "0.4"
 regex = "1"
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 trust-dns-resolver = "0.22"
 url = "2"
 

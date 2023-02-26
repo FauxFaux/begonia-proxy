@@ -220,7 +220,7 @@ where
 pub async fn main() -> Result<()> {
     env_logger::init();
 
-    let client = Client::try_default().await?;
+    let client = Client::try_default().await.context("initialising client")?;
 
     let version_info = client
         .apiserver_version()
