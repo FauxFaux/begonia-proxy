@@ -44,6 +44,7 @@ async fn read_initialisation(socket: &mut TcpStream, buf: &mut [u8]) -> Result<C
         return match valid[0] {
             // https-style CONNECT
             b'C' | b'G' => {
+                // curl -p -x http://localhost:3438 http://kube-dns.kube-system:9153/metrics
                 let mut headers = [httparse::EMPTY_HEADER; 16];
                 let mut req = httparse::Request::new(&mut headers);
                 if req.parse(&buf)?.is_partial() {

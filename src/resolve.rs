@@ -116,6 +116,7 @@ async fn resolve_against_kube_dns(ctx: ResolveCtx, hostname: &str) -> Result<Vec
             socket_addr: SocketAddr::new(ip, 53),
             tls_dns_name: None,
             trust_nx_responses: true,
+            bind_addr: None,
         });
         config.add_search(Name::from_str(&format!(
             "{}.svc.{}",
