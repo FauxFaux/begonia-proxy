@@ -6,12 +6,12 @@ use std::str::FromStr;
 use anyhow::anyhow;
 use anyhow::Context;
 use anyhow::Result;
+use hickory_resolver::config::{NameServerConfig, Protocol, ResolverConfig, ResolverOpts};
+use hickory_resolver::Name;
 use k8s_openapi::api::core::v1::Endpoints;
 use kube::Api;
 use lazy_static::lazy_static;
 use regex::Regex;
-use trust_dns_resolver::config::{NameServerConfig, Protocol, ResolverConfig, ResolverOpts};
-use trust_dns_resolver::Name;
 
 #[derive(Clone)]
 pub struct ResolveCtx {
@@ -126,7 +126,7 @@ async fn resolve_against_kube_dns(ctx: ResolveCtx, hostname: &str) -> Result<Vec
         config.add_search(Name::from_str(&ctx.cluster_local)?);
     }
     Ok(
-        trust_dns_resolver::TokioAsyncResolver::tokio(config, ResolverOpts::default())
+        hickory_resolver::TokioAsyncResolver::tokio(config, ResolverOpts::default())
             .lookup_ip(hostname)
             .await?
             .into_iter()
