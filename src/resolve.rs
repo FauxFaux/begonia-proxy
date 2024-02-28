@@ -115,7 +115,7 @@ async fn resolve_against_kube_dns(ctx: ResolveCtx, hostname: &str) -> Result<Vec
             protocol: Protocol::Udp,
             socket_addr: SocketAddr::new(ip, 53),
             tls_dns_name: None,
-            trust_nx_responses: true,
+            trust_negative_responses: true,
             bind_addr: None,
         });
         config.add_search(Name::from_str(&format!(
@@ -126,7 +126,7 @@ async fn resolve_against_kube_dns(ctx: ResolveCtx, hostname: &str) -> Result<Vec
         config.add_search(Name::from_str(&ctx.cluster_local)?);
     }
     Ok(
-        trust_dns_resolver::TokioAsyncResolver::tokio(config, ResolverOpts::default())?
+        trust_dns_resolver::TokioAsyncResolver::tokio(config, ResolverOpts::default())
             .lookup_ip(hostname)
             .await?
             .into_iter()

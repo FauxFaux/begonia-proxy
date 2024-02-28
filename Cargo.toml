@@ -13,7 +13,7 @@ lazy_static = "1"
 log = "0.4"
 regex = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-trust-dns-resolver = "0.22"
+trust-dns-resolver = "0.23"
 url = "2"
 
 [profile.release]
