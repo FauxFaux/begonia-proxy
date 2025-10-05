@@ -1,19 +1,18 @@
-use std::collections::HashSet;
-use std::convert::TryFrom;
-use std::net::{IpAddr, SocketAddr};
-use std::str::FromStr;
-
-use anyhow::anyhow;
 use anyhow::Context;
 use anyhow::Result;
-use hickory_resolver::config::{NameServerConfig, ResolverConfig};
+use anyhow::anyhow;
 use hickory_resolver::Name;
+use hickory_resolver::config::{NameServerConfig, ResolverConfig};
 use hickory_resolver::name_server::TokioConnectionProvider;
 use hickory_resolver::proto::xfer::Protocol;
 use k8s_openapi::api::core::v1::Endpoints;
 use kube::Api;
-use lazy_static::lazy_static;
 use regex::Regex;
+use std::collections::HashSet;
+use std::convert::TryFrom;
+use std::net::{IpAddr, SocketAddr};
+use std::str::FromStr;
+use std::sync::LazyLock;
 
 #[derive(Clone)]
 pub struct ResolveCtx {
@@ -40,13 +39,13 @@ pub(crate) async fn resolve(
     hostname: &str,
     specified_port: u16,
 ) -> Result<Vec<SocketAddr>> {
-    lazy_static! {
-        static ref RE: Regex = Regex::new(concat!(
+    static RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(concat!(
             "^([a-zA-Z0-9-]{1,63})(?:\\.([a-zA-Z0-9-]{1,63}))?",
             "\\.(endpoints|pod|pod-by-name)\\.local\\.?$"
         ))
-        .unwrap();
-    }
+        .unwrap()
+    });
 
     if let Some(custom) = RE.captures(&hostname) {
         let name: &str = &custom[1];
@@ -128,13 +127,14 @@ async fn resolve_against_kube_dns(ctx: ResolveCtx, hostname: &str) -> Result<Vec
         config.add_search(Name::from_str(&format!("svc.{}", &ctx.cluster_local))?);
         config.add_search(Name::from_str(&ctx.cluster_local)?);
     }
-    Ok(
-        hickory_resolver::TokioResolver::builder_with_config(config, TokioConnectionProvider::default())
-            .build()
-            .lookup_ip(hostname)
-            .await?
-            .into_iter()
-            .map(|v| v)
-            .collect(),
+    Ok(hickory_resolver::TokioResolver::builder_with_config(
+        config,
+        TokioConnectionProvider::default(),
     )
+    .build()
+    .lookup_ip(hostname)
+    .await?
+    .into_iter()
+    .map(|v| v)
+    .collect())
 }

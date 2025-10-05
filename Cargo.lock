@@ -136,11 +136,9 @@ dependencies = [
  "httparse",
  "k8s-openapi",
  "kube",
- "lazy_static",
  "log",
  "regex",
  "tokio",
- "url",
 ]
 
 [[package]]
@@ -946,12 +944,6 @@ dependencies = [
  "serde_json",
  "thiserror",
 ]
-
-[[package]]
-name = "lazy_static"
-version = "1.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
 name = "libc"

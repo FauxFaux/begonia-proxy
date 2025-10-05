@@ -10,11 +10,9 @@ hickory-resolver = "0.25"
 httparse = "1"
 k8s-openapi = { version = "0.26.0", default-features = false, features = ["v1_32"] }
 kube = { version = "2", features = ["client"] }
-lazy_static = "1"
 log = "0.4"
 regex = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-url = "2"
 
 [profile.release]
 lto = true

@@ -5,10 +5,10 @@ use std::net::Ipv4Addr;
 use std::net::SocketAddr;
 use std::str::FromStr;
 
-use anyhow::anyhow;
-use anyhow::bail;
 use anyhow::Context;
 use anyhow::Result;
+use anyhow::anyhow;
+use anyhow::bail;
 use kube::Client;
 use log::debug;
 use log::error;
@@ -56,7 +56,7 @@ async fn read_initialisation(socket: &mut TcpStream, buf: &mut [u8]) -> Result<C
                     Some("GET") => {
                         return Ok(ConnectType::InvalidHttpGet {
                             path: path.to_string(),
-                        })
+                        });
                     }
                     method => bail!("invalid method {:?}", method),
                 };

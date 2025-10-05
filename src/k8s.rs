@@ -1,9 +1,9 @@
 use std::net::IpAddr;
 use std::str::FromStr;
 
-use anyhow::anyhow;
 use anyhow::Context;
 use anyhow::Result;
+use anyhow::anyhow;
 use k8s_openapi::api::core::v1::{EndpointPort, Endpoints};
 use kube::Api;
 use kube::Client;
