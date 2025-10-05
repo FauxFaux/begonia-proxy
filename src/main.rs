@@ -237,20 +237,6 @@ pub async fn main() -> Result<()> {
         .with_context(|| anyhow!("finding dns servers"))?;
     info!("found kube-dns: {:?}", dns);
 
-    #[cfg(never)]
-    let pod = pods.get_status("svc-flags-78966c8947-45gds").await?;
-    #[cfg(never)]
-    println!(
-        "{:?}",
-        pod.status
-            .unwrap()
-            .pod_ips
-            .unwrap()
-            .into_iter()
-            .flat_map(|p| p.ip)
-            .collect::<Vec<_>>()
-    );
-
     let addr = "[::]:3438";
     info!("binding to {:?}", addr);
     let listener = TcpListener::bind(addr).await?;
